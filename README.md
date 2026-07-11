@@ -33,7 +33,8 @@ python tests/test_pipeline.py
 python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 1
 
 # 2) Full real data via ENTSO-E Transparency (free token: transparency.entsoe.eu)
-export ENTSOE_KEY=...
+#    Put ENTSOE_KEY=... in a .env file (gitignored) or export it as env var.
+python scripts/download_entsoe.py --zone DE_LU --start 2021-01-01   # caches to data/
 python scripts/run_dayahead.py --source entsoe --start 2021-01-01 --cal 730 --test 365
 
 # 3) Intraday spread (proxy demo; plug real EPEX ID3 with --id-csv)
