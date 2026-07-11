@@ -1,0 +1,8 @@
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-learn>=1.4
+# optional but recommended:
+lightgbm>=4.0 ; python_version < "3.14"
+entsoe-py>=0.6
+matplotlib>=3.8
