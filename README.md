@@ -55,11 +55,13 @@ epf-system/
 ├── scripts/                      # Entry points
 │   ├── run_dayahead.py           # Day-ahead backtest CLI
 │   ├── run_intraday.py           # Intraday spread backtest CLI
-│   └── download_entsoe.py        # ENTSO-E data downloader with caching
+│   ├── download_entsoe.py        # ENTSO-E data downloader with caching
+│   └── make_plots.py             # README figures from a saved backtest run
 │
 ├── tests/
 │   └── test_pipeline.py          # 7 tests: no-look-ahead, DM, conformal, repairs
 │
+├── docs/img/                     # Result figures (committed)
 ├── data/                         # Cached downloads (gitignored)
 ├── outputs/                      # Forecasts, intervals, metrics, DM p-values (CSV)
 ├── ROBUSTNESS.md                 # Change log of every robustness improvement
@@ -117,8 +119,10 @@ python scripts/run_intraday.py --source synthetic --days 300 --cal-hours 4800 --
 ### Reproducible Open Benchmark
 
 ```bash
-# 6-year German market, Lago et al. epftoolbox data
-python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 1
+# 6-year German market, Lago et al. epftoolbox data (auto-downloads on first run).
+# --recal 7 reproduces the README results in ~30 min; --recal 1 is the published
+# gold-standard protocol (slower, LEAR-only recommended).
+python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 7
 ```
 
 ### Real Data via ENTSO-E
@@ -204,24 +208,64 @@ Walk-forward (rolling origin) — expanding calibration window:
 
 ## Results
 
-### Day-Ahead (synthetic 45-day OOS)
+**Real data, real out-of-sample year.** All figures below come from the German market (EPEX DE, [Lago et al. open benchmark data](https://doi.org/10.1016/j.apenergy.2021.116983)): calibration on a rolling 730-day window, test on the **full calendar year 2017** (365 days, never seen in calibration), recalibration every 7 days. Reproduce with:
 
-| Model | MAE (€/MWh) | rMAE | Coverage 90% |
-|-------|:-----------:|:----:|:------------:|
-| Naive | 21.8 | 1.00 | — |
-| LEAR | 11.5 | 0.53 | 87% |
-| GBT | 16.8 | 0.77 | 85% |
-| **Ensemble** | **12.0** | **0.55** | **87.5%** |
+```bash
+python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 7 --out outputs/de_benchmark
+python scripts/make_plots.py --run outputs/de_benchmark --out docs/img
+```
 
-### Intraday Spread (proxy)
+### Day-Ahead — German market, 365-day out-of-sample
+
+| Model | MAE (€/MWh) | RMSE | rMAE | sMAPE% | Coverage 90% | Pinball |
+|-------|:-----------:|:----:|:----:|:------:|:------------:|:-------:|
+| Naive | 9.89 | 16.50 | 1.00 | 34.1 | — | — |
+| LEAR | 4.38 | 7.61 | 0.44 | 16.7 | 87.6% | 0.80 |
+| GBT | 4.55 | 8.03 | 0.46 | 17.5 | 87.2% | 0.83 |
+| **Ensemble** | **4.05** | **7.29** | **0.41** | **15.7** | 87.4% | **0.75** |
+
+![Out-of-sample MAE by model](docs/img/mae_by_model.png)
+
+The ensemble cuts the naive benchmark's error by **59%** (rMAE 0.41), in line with the strongest published results on this dataset. Two readings worth making explicit:
+
+- **The linear model is nearly unbeatable on its own.** LEAR (one Lasso per hour on asinh-scaled data) lands within 8% of the ensemble — a recurring finding in the EPF literature: with the right feature set, regularized linear regression is an extremely strong baseline, and any nonlinear model has to earn its keep.
+- **The ensemble is still statistically better.** The multivariate Diebold–Mariano test on daily losses gives p < 10⁻⁴ for ensemble vs. both members, while LEAR vs. GBT is statistically indistinguishable (p = 0.17) — the classic case where averaging two equally-good, differently-wrong models is the only free lunch available.
+
+| DM p-values (row vs col) | naive | lear | gbt | ensemble |
+|---|:---:|:---:|:---:|:---:|
+| **naive** | — | 0.000 | 0.000 | 0.000 |
+| **lear** | 0.000 | — | 0.174 | 0.000 |
+| **gbt** | 0.000 | 0.174 | — | 0.000 |
+| **ensemble** | 0.000 | 0.000 | 0.000 | — |
+
+### What the forecasts look like under stress
+
+![Two-week forecast sample with 90% conformal band](docs/img/forecast_sample.png)
+
+This is the **most volatile fortnight of the test year, selected automatically** — it happens to contain storm *Herwart* (28–30 Oct 2017), when record wind generation pinned German prices at the −83 €/MWh floor for hours. Honest commentary:
+
+- The model **calls the direction of the crash** — the forecast goes deeply negative on the right day — but underestimates its depth: a day-ahead model only knows the wind *forecast*, and the storm out-ran it. That residual risk is exactly what the intraday layer exists for.
+- The **90% conformal band visibly widens** through the episode and tightens again in the calm week after: the rolling asymmetric conformal calibration adapts to volatility regimes without any distributional assumption.
+- Outside the storm, forecast and actual are near-indistinguishable at this scale — the 4 €/MWh MAE is dominated by spike days, not by systematic bias.
+
+### Where the error lives
+
+![Out-of-sample MAE by delivery hour](docs/img/mae_by_hour.png)
+
+Errors concentrate in the **morning ramp (07–09)** and **evening peak (17–19)** — the steep segments of the merit-order curve, where a 1 GW residual-load surprise moves the price most. The naive benchmark is worst mid-day because day-to-day solar variability wrecks similar-day logic; the fitted models absorb it through the solar forecast features.
+
+**Coverage honesty:** empirical 90%-band coverage is 87–88%, not 90%. The gap is concentrated in spike regimes, and the number is computed *without* the conformal warm-up period (days with insufficient residual history get no band at all rather than a backfilled one — backfilling would leak future residuals). A slightly conservative reading beats a flattering one.
+
+### Intraday Spread (proxy demo)
 
 | Metric | Value |
 |--------|:-----:|
-| rMAE vs ID=DA | 0.47 |
-| Coverage 80% | 81.8% |
-| Directional accuracy | 86% |
+| MAE vs naive "ID = DA" | 7.0 vs 14.4 €/MWh |
+| rMAE | 0.49 |
+| Coverage 80% | 75.3% |
+| Directional accuracy | 85.3% |
 
-> **Honest reading:** These results are on synthetic data designed to validate the pipeline mechanics. Real-market performance requires plugging in ENTSO-E prices and (for intraday) real EPEX ID data. The synthetic generator is realistic (merit-order based, OU gas dynamics, Poisson–Gamma spikes, growing solar capacity), but it is not a substitute for empirical evaluation.
+> The intraday layer runs on a **proxy spread** (real EPEX ID indices are licensed): the machinery — quantile GBT, CQR band correction, knowledge-lagged features — is validated end-to-end, but these numbers demonstrate the pipeline, not real-market economics. Plug in real ID3 data via `--id-csv` for the latter.
 
 ---
 

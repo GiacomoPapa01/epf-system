@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -96,6 +97,9 @@ def fig_forecast_sample(actuals, forecasts, out):
     ax.set_title(f"Most volatile two weeks of the test year "
                  f"({win[0].date()} - {win[-1].date()})", color=INK, loc="left")
     ax.legend(frameon=False, loc="upper left", ncols=3, fontsize=9)
+    loc = mdates.AutoDateLocator(minticks=5, maxticks=8)
+    ax.xaxis.set_major_locator(loc)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
     ax.margins(x=0.01)
     fig.tight_layout()
     fig.savefig(out)
