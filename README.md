@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">⚡ EPF System</h1>
+  <h1 align="center" EPF System</h1>
   <p align="center">
     <strong>Day-Ahead & Intraday Electricity Price Forecasting</strong>
   </p>
@@ -29,10 +29,10 @@ Electricity is the only major commodity that **cannot be stored at scale**. This
 
 **EPF System** is a production-oriented Python pipeline that forecasts **24 hourly day-ahead prices** and **intraday DA→ID spreads** with:
 
-- 🔒 **No look-ahead leakage** — forecasts use only information available before the SDAC 12:00 CET gate closure, enforced structurally and unit-tested
-- 📊 **Probabilistic output** — asymmetric split-conformal intervals (day-ahead) and CQR-corrected quantile bands (intraday)
-- 📈 **Rigorous validation** — walk-forward backtesting, Diebold–Mariano significance tests, and honest coverage reporting
-- 🏗️ **Modular architecture** — swap data sources, models, or features without touching the backtest engine
+-  **No look-ahead leakage** — forecasts use only information available before the SDAC 12:00 CET gate closure, enforced structurally and unit-tested
+-  **Probabilistic output** — asymmetric split-conformal intervals (day-ahead) and CQR-corrected quantile bands (intraday)
+-  **Rigorous validation** — walk-forward backtesting, Diebold–Mariano significance tests, and honest coverage reporting
+-  **Modular architecture** — swap data sources, models, or features without touching the backtest engine
 
 The day-ahead layer follows the strongest published open benchmarks ([Lago et al., 2021](https://doi.org/10.1016/j.apenergy.2021.116983)); the intraday layer models the DA→ID spread as a function of residual-load surprises.
 
@@ -155,10 +155,10 @@ All outputs (forecasts, metrics, DM p-values) are saved as CSV to `outputs/`.
 
 | Category | Features | Leakage-safe? |
 |----------|----------|:------------:|
-| **Price lags** | Full 24h vectors at lags 1, 2, 3, 7 days | ✅ D−1 price fixed at D−2 auction |
-| **Exogenous forecasts** | `load_fc`, `wind_fc`, `solar_fc` for D, D−1, D−7 | ✅ TSO publishes before auction |
-| **Residual load** | `load_fc − wind_fc − solar_fc` (merit order proxy) | ✅ Derived from forecasts |
-| **Calendar** | Day-of-week dummies, annual sin/cos | ✅ Deterministic |
+| **Price lags** | Full 24h vectors at lags 1, 2, 3, 7 days |  D−1 price fixed at D−2 auction |
+| **Exogenous forecasts** | `load_fc`, `wind_fc`, `solar_fc` for D, D−1, D−7 |  TSO publishes before auction |
+| **Residual load** | `load_fc − wind_fc − solar_fc` (merit order proxy) |  Derived from forecasts |
+| **Calendar** | Day-of-week dummies, annual sin/cos |  Deterministic |
 
 **Scaling:** Asinh + median/MAD standardization ([Uniejewski et al.](https://doi.org/10.1016/j.apenergy.2018.09.226)) — robust to spikes and handles negative prices natively (unlike log).
 
@@ -300,11 +300,11 @@ CI runs on every push via GitHub Actions (Python 3.12, full synthetic smoke test
 
 ## Honest Limitations
 
-- 🔴 **Intraday uses a proxy spread** — the machinery is validated, but real economics require actual EPEX ID prices
-- 🟡 **DST days** — 23/25-hour days are dropped (standard in the literature); production code should handle them explicitly
-- 🟡 **No hyperparameter tuning** for GBT — fixed sensible defaults; nested time-series CV would be the clean extension
-- 🟡 **Daily recalibration of GBT** over a 1-year test takes hours — use `--recal 7` for a good accuracy/runtime trade-off
-- 🟡 **DM test** uses t-approximation — for publication-grade claims, add Giacomini–White conditional predictive ability
+-  **Intraday uses a proxy spread** — the machinery is validated, but real economics require actual EPEX ID prices
+-  **DST days** — 23/25-hour days are dropped (standard in the literature); production code should handle them explicitly
+-  **No hyperparameter tuning** for GBT — fixed sensible defaults; nested time-series CV would be the clean extension
+-  **Daily recalibration of GBT** over a 1-year test takes hours — use `--recal 7` for a good accuracy/runtime trade-off
+-  **DM test** uses t-approximation — for publication-grade claims, add Giacomini–White conditional predictive ability
 
 ---
 
