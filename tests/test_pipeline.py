@@ -40,13 +40,6 @@ def test_asinh_scaler_roundtrip():
     assert np.allclose(a, back, atol=1e-8)
 
 
-if __name__ == "__main__":
-    test_no_lookahead_in_design_matrix()
-    test_dm_test_symmetric()
-    test_asinh_scaler_roundtrip()
-    print("All tests passed.")
-
-
 def test_validation_repairs_gaps_and_duplicates():
     from epf import validation
     df = data.make_synthetic(n_days=30)
@@ -73,6 +66,9 @@ def test_asymmetric_conformal_coverage():
     act = pd.DataFrame(rng.gamma(2, 10, size=(n, 24)))          # right-skewed
     fcst = act - rng.gamma(2, 10, size=(n, 24)) + 20             # biased, skewed errors
     lo, hi = _conformal(fcst, act, alpha=0.10, window=120)
+    # warm-up: no bands before enough out-of-sample residuals exist (no bfill
+    # of future residuals -> no look-ahead)
+    assert lo.iloc[:20].isna().all().all() and hi.iloc[:20].isna().all().all()
     cov = ((act >= lo) & (act <= hi)).values[150:].mean()
     assert 0.85 < cov < 0.95, cov
 
@@ -86,3 +82,12 @@ def test_learwindows_runs():
     m = LEARWindows(windows=(56, 84)).fit(X.iloc[:150], Y.iloc[:150])
     p = m.predict(X.iloc[150:155])
     assert p.shape == (5, 24) and np.isfinite(p).all()
+
+
+if __name__ == "__main__":
+    tests = [f for name, f in sorted(vars().items())
+             if name.startswith("test_") and callable(f)]
+    for fn in tests:
+        fn()
+        print(f"  ok: {fn.__name__}")
+    print("All tests passed.")

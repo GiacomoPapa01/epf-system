@@ -34,9 +34,13 @@ def rmae(y, yhat, y_naive):
 
 
 def pinball_loss(y, q_lo, q_hi, alpha=0.1):
-    """Average pinball loss of the two conformal bounds (alpha/2, 1-alpha/2)."""
-    y = np.asarray(y)
-    lo, hi = np.asarray(q_lo), np.asarray(q_hi)
+    """Average pinball loss of the two conformal bounds (alpha/2, 1-alpha/2).
+    NaN bounds (conformal warm-up, no history yet) are excluded."""
+    y, lo, hi = np.asarray(y, float), np.asarray(q_lo, float), np.asarray(q_hi, float)
+    m = np.isfinite(lo) & np.isfinite(hi)
+    if not m.any():
+        return float("nan")
+    y, lo, hi = y[m], lo[m], hi[m]
     a = alpha / 2
     pl_lo = np.mean(np.maximum(a * (y - lo), (a - 1) * (y - lo)))
     pl_hi = np.mean(np.maximum((1 - a) * (y - hi), -a * (y - hi)))
@@ -44,8 +48,12 @@ def pinball_loss(y, q_lo, q_hi, alpha=0.1):
 
 
 def coverage(y, lo, hi):
-    y = np.asarray(y)
-    return float(np.mean((y >= np.asarray(lo)) & (y <= np.asarray(hi))))
+    """Empirical interval coverage; NaN bounds (warm-up) are excluded."""
+    y, lo, hi = np.asarray(y, float), np.asarray(lo, float), np.asarray(hi, float)
+    m = np.isfinite(lo) & np.isfinite(hi)
+    if not m.any():
+        return float("nan")
+    return float(np.mean((y[m] >= lo[m]) & (y[m] <= hi[m])))
 
 
 def dm_test(y: np.ndarray, f1: np.ndarray, f2: np.ndarray, power: int = 1):

@@ -18,25 +18,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from epf import data
 
 
-def read_env_key(root: str) -> str | None:
-    path = os.path.join(root, ".env")
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("ENTSOE_KEY="):
-                return line.split("=", 1)[1].strip()
-    return None
-
-
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser()
     ap.add_argument("--zone", default="DE_LU")
     ap.add_argument("--start", default="2021-01-01")
     ap.add_argument("--end", default=None)
-    ap.add_argument("--api-key", default=os.environ.get("ENTSOE_KEY") or read_env_key(root))
+    ap.add_argument("--api-key", default=data.find_api_key(root))
     ap.add_argument("--out", default=None, help="output CSV (default data/entsoe_<zone>.csv)")
     a = ap.parse_args()
 

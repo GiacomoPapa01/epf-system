@@ -19,7 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="synthetic", choices=["synthetic", "epftoolbox", "entsoe"])
     ap.add_argument("--market", default="DE")
-    ap.add_argument("--api-key", default=os.environ.get("ENTSOE_KEY"))
+    ap.add_argument("--api-key", default=None, help="default: ENTSOE_KEY env var or .env")
     ap.add_argument("--start", default="2020-01-01")
     ap.add_argument("--days", type=int, default=730, help="synthetic only")
     ap.add_argument("--cal", type=int, default=365)
@@ -36,7 +36,9 @@ def main():
         df = data.load_epftoolbox(a.market)
         exog = [c for c in ["load_fc", "renewables_fc", "res_load_fc", "exog1", "exog2"] if c in df.columns]
     else:
-        df = data.load_entsoe(a.api_key, start=a.start)
+        df = data.load_entsoe_csv()  # cached by scripts/download_entsoe.py
+        if df is None:
+            df = data.load_entsoe(a.api_key or data.find_api_key(), start=a.start)
         exog = ["load_fc", "wind_fc", "solar_fc", "res_load_fc"]
 
     df, report = validation.validate_hourly(df)
@@ -60,6 +62,9 @@ def main():
     res.dm_matrix().to_csv(os.path.join(a.out, "dayahead_dm_pvalues.csv"))
     for name, f in res.forecasts.items():
         f.to_csv(os.path.join(a.out, f"dayahead_forecast_{name}.csv"))
+    for name, (lo, hi) in res.intervals.items():
+        lo.to_csv(os.path.join(a.out, f"dayahead_interval_lo_{name}.csv"))
+        hi.to_csv(os.path.join(a.out, f"dayahead_interval_hi_{name}.csv"))
     res.actuals.to_csv(os.path.join(a.out, "dayahead_actuals.csv"))
     print(f"\nSaved forecasts + metrics to {a.out}/")
 

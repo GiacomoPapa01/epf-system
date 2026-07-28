@@ -26,11 +26,12 @@ Derived:
 """
 from __future__ import annotations
 
-import io
+import os
 import urllib.request
 
 import numpy as np
 import pandas as pd
+from scipy.signal import lfilter
 
 EPFTOOLBOX_URLS = {
     # Open benchmark datasets from Lago et al. (2021), mirrored on Zenodo.
@@ -42,6 +43,12 @@ EPFTOOLBOX_URLS = {
 # ----------------------------------------------------------------------------- 
 # 1) ENTSO-E
 # -----------------------------------------------------------------------------
+# ENTSO-E PSR codes: B16 = Solar, B18 = Wind Offshore, B19 = Wind Onshore.
+# Querying generation per type keeps each request small enough to avoid the
+# 504 gateway timeouts that the unfiltered A75 query hits on long ranges.
+_GEN_PSR = {"wind_act": ("B18", "B19"), "solar_act": ("B16",)}
+
+
 def load_entsoe(
     api_key: str,
     country_code: str = "DE_LU",
@@ -52,7 +59,7 @@ def load_entsoe(
     """Download full dataset from ENTSO-E Transparency (requires entsoe-py)."""
     from entsoe import EntsoePandasClient  # pip install entsoe-py
 
-    client = EntsoePandasClient(api_key=api_key)
+    client = EntsoePandasClient(api_key=api_key, retry_count=3, retry_delay=20)
     start_ts = pd.Timestamp(start, tz=tz)
     end_ts = pd.Timestamp(end, tz=tz) if end else pd.Timestamp.now(tz=tz).normalize()
 
@@ -60,7 +67,6 @@ def load_entsoe(
     load_fc = client.query_load_forecast(country_code, start=start_ts, end=end_ts)
     load_act = client.query_load(country_code, start=start_ts, end=end_ts)
     ws_fc = client.query_wind_and_solar_forecast(country_code, start=start_ts, end=end_ts)
-    gen = client.query_generation(country_code, start=start_ts, end=end_ts, psr_type=None)
 
     # Since Oct 2025 the DA market trading unit is 15 min: resample to hourly.
     df = pd.DataFrame({"price": _to_hourly(price)})
@@ -70,18 +76,63 @@ def load_entsoe(
         ws_fc.filter(like="Wind").sum(axis=1) if hasattr(ws_fc, "filter") else ws_fc
     )
     df["solar_fc"] = _to_hourly(ws_fc["Solar"]) if "Solar" in getattr(ws_fc, "columns", []) else np.nan
-    wind_cols = [c for c in gen.columns if "Wind" in str(c)]
-    solar_cols = [c for c in gen.columns if "Solar" in str(c)]
-    df["wind_act"] = _to_hourly(gen[wind_cols].sum(axis=1)) if wind_cols else np.nan
-    df["solar_act"] = _to_hourly(gen[solar_cols].sum(axis=1)) if solar_cols else np.nan
+    for col, psr_types in _GEN_PSR.items():
+        s = _query_generation_by_type(client, country_code, start_ts, end_ts, psr_types)
+        df[col] = s if s is not None else np.nan
 
     df.index = df.index.tz_convert("UTC")
     return add_residual_load(df.sort_index())
 
 
+def _query_generation_by_type(client, zone, start_ts, end_ts, psr_types):
+    """Sum actual generation over the given PSR types (skips absent ones)."""
+    from entsoe.exceptions import NoMatchingDataError
+
+    total = None
+    for psr in psr_types:
+        try:
+            g = client.query_generation(zone, start=start_ts, end=end_ts, psr_type=psr)
+        except NoMatchingDataError:  # e.g. no offshore wind in this zone
+            continue
+        if isinstance(g, pd.DataFrame):
+            # drop "Actual Consumption" columns (pumped storage etc.)
+            keep = [c for c in g.columns if "Consumption" not in str(c)]
+            g = g[keep].sum(axis=1)
+        g = _to_hourly(g)
+        total = g if total is None else total.add(g, fill_value=0.0)
+    return total
+
+
 def _to_hourly(s):
     s = s.squeeze()
     return s.resample("1h").mean()
+
+
+def load_entsoe_csv(zone: str = "DE_LU", cache_dir: str = "data") -> pd.DataFrame | None:
+    """Load a dataset cached by scripts/download_entsoe.py, or None if absent."""
+    path = os.path.join(cache_dir, f"entsoe_{zone}.csv")
+    if not os.path.exists(path):
+        return None
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    idx = pd.DatetimeIndex(df.index)
+    df.index = idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC")
+    return df
+
+
+def find_api_key(root: str | None = None) -> str | None:
+    """ENTSO-E key from the ENTSOE_KEY env var or a .env file in the project root."""
+    key = os.environ.get("ENTSOE_KEY")
+    if key:
+        return key
+    root = root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, ".env")
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ENTSOE_KEY="):
+                    return line.split("=", 1)[1].strip()
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -94,8 +145,6 @@ def load_epftoolbox(market: str = "DE", cache_dir: str = "data") -> pd.DataFrame
     forecast, exog2 = wind+solar generation forecast. So residual load is
     directly exog1 - exog2.
     """
-    import os
-
     path = os.path.join(cache_dir, f"{market}.csv")
     if not os.path.exists(path):
         os.makedirs(cache_dir, exist_ok=True)
@@ -166,11 +215,9 @@ def make_synthetic(n_days: int = 730, seed: int = 7) -> pd.DataFrame:
 
 
 def _ar1(rng, n, phi, sigma):
-    x = np.zeros(n)
     eps = rng.normal(0, sigma, n)
-    for i in range(1, n):
-        x[i] = phi * x[i - 1] + eps[i]
-    return x
+    eps[0] = 0.0  # x[0] = 0, same as the recursive definition
+    return lfilter([1.0], [1.0, -phi], eps)
 
 
 def add_residual_load(df: pd.DataFrame) -> pd.DataFrame:

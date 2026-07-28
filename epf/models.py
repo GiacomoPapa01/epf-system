@@ -142,15 +142,16 @@ class GBT:
             lo = np.quantile(Yv, self.winsorize[0])
             hi = np.quantile(Yv, self.winsorize[1])
             Yv = np.clip(Yv, lo, hi)
+        # fit/predict both take the DataFrame so feature names stay consistent
         self.models_ = []
         for h in range(24):
             m = self._new()
-            m.fit(X.values, Yv[:, h])
+            m.fit(X, Yv[:, h])
             self.models_.append(m)
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
-        return np.column_stack([m.predict(X.values) for m in self.models_])
+        return np.column_stack([m.predict(X) for m in self.models_])
 
 
 class Ensemble:

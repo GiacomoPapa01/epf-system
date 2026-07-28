@@ -80,29 +80,35 @@ def run_backtest(
         )
     test_dates = dates[-test_days:]
 
+    need_lear = "lear" in models or "ensemble" in models
+    need_gbt = "gbt" in models or "ensemble" in models
     preds: dict[str, list[np.ndarray]] = {m: [] for m in models}
     naive_model = NaiveDaily()
     fitted: dict[str, object] = {}
 
-    for i, d in enumerate(test_dates):
-        if i % recal_every == 0:
-            pos = dates.get_loc(d)
-            tr = dates[max(0, pos - cal_days) : pos]
-            if "lear" in models or "ensemble" in models:
-                fitted["lear"] = LEAR().fit(X.loc[tr], Y.loc[tr])
-            if "learw" in models:
-                fitted["learw"] = LEARWindows().fit(X.loc[tr], Y.loc[tr])
-            if "gbt" in models or "ensemble" in models:
-                fitted["gbt"] = GBT().fit(X.loc[tr], Y.loc[tr])
-            if verbose and i % (recal_every * 10) == 0:
-                print(f"  [{i + 1}/{test_days}] recalibrated @ {d.date()}")
-        xrow = X.loc[[d]]
-        p_lear = fitted["lear"].predict(xrow)[0] if "lear" in fitted else None
-        p_gbt = fitted["gbt"].predict(xrow)[0] if "gbt" in fitted else None
+    # One iteration per recalibration block: models are fitted on data strictly
+    # before the first day of the block, then predict the whole block at once
+    # (identical to per-day prediction with the same fitted models, just faster).
+    for i in range(0, len(test_dates), recal_every):
+        block = test_dates[i : i + recal_every]
+        pos = dates.get_loc(block[0])
+        tr = dates[max(0, pos - cal_days) : pos]
+        if need_lear:
+            fitted["lear"] = LEAR().fit(X.loc[tr], Y.loc[tr])
+        if "learw" in models:
+            fitted["learw"] = LEARWindows().fit(X.loc[tr], Y.loc[tr])
+        if need_gbt:
+            fitted["gbt"] = GBT().fit(X.loc[tr], Y.loc[tr])
+        if verbose and (i // recal_every) % 10 == 0:
+            print(f"  [{i + 1}/{test_days}] recalibrated @ {block[0].date()}")
+
+        Xb = X.loc[block]
+        p_lear = fitted["lear"].predict(Xb) if need_lear else None
+        p_gbt = fitted["gbt"].predict(Xb) if need_gbt else None
         if "lear" in models:
             preds["lear"].append(p_lear)
         if "learw" in models:
-            preds["learw"].append(fitted["learw"].predict(xrow)[0])
+            preds["learw"].append(fitted["learw"].predict(Xb))
         if "gbt" in models:
             preds["gbt"].append(p_gbt)
         if "ensemble" in models:
@@ -135,6 +141,9 @@ def _conformal(fcst: pd.DataFrame, act: pd.DataFrame, alpha: float, window: int)
     """
     resid = act - fcst  # signed
     mp = max(20, window // 3)
-    q_lo = resid.rolling(window, min_periods=mp).quantile(alpha / 2).shift(1).bfill()
-    q_hi = resid.rolling(window, min_periods=mp).quantile(1 - alpha / 2).shift(1).bfill()
+    # shift(1): the band for day D only uses residuals up to D-1. Days without
+    # enough history get NaN bands (excluded from coverage/pinball) rather than
+    # backfilled ones, which would leak future residuals into the early test.
+    q_lo = resid.rolling(window, min_periods=mp).quantile(alpha / 2).shift(1)
+    q_hi = resid.rolling(window, min_periods=mp).quantile(1 - alpha / 2).shift(1)
     return fcst + q_lo, fcst + q_hi

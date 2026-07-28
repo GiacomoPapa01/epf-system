@@ -21,7 +21,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="synthetic", choices=["synthetic", "entsoe"])
     ap.add_argument("--days", type=int, default=550)
-    ap.add_argument("--api-key", default=os.environ.get("ENTSOE_KEY"))
+    ap.add_argument("--api-key", default=None, help="default: ENTSOE_KEY env var or .env")
     ap.add_argument("--start", default="2021-01-01")
     ap.add_argument("--id-csv", default=None, help="CSV with real ID prices (timestamp,id_price)")
     ap.add_argument("--cal-hours", type=int, default=24 * 365)
@@ -32,7 +32,9 @@ def main():
     if a.source == "synthetic":
         df = data.make_synthetic(n_days=a.days)
     else:
-        df = data.load_entsoe(a.api_key, start=a.start)
+        df = data.load_entsoe_csv()  # cached by scripts/download_entsoe.py
+        if df is None:
+            df = data.load_entsoe(a.api_key or data.find_api_key(), start=a.start)
 
     if a.id_csv:
         idp = pd.read_csv(a.id_csv, index_col=0, parse_dates=True).squeeze()

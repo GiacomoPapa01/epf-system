@@ -78,8 +78,10 @@ def build_design_matrix(
                     feats[f"{col}_l{lag}_h{h}"] = panel[key].shift(lag)
     X = pd.DataFrame(feats, index=panel.index)
 
-    # calendar
-    dow = pd.get_dummies(X.index.dayofweek, prefix="dow").astype(float)
+    # calendar (reindexed to all 7 weekdays so the design is stable even if a
+    # short sample happens to miss one)
+    dow = pd.get_dummies(X.index.dayofweek, prefix="dow")
+    dow = dow.reindex(columns=[f"dow_{i}" for i in range(7)], fill_value=0).astype(float)
     dow.index = X.index
     X = pd.concat([X, dow], axis=1)
     X["doy_sin"] = np.sin(2 * np.pi * X.index.dayofyear / 365.25)

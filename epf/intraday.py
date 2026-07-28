@@ -104,19 +104,19 @@ def backtest_intraday(
 
     out = pd.DataFrame(index=test_idx, columns=["q10", "q50", "q90", "y"], dtype=float)
     out["y"] = data.loc[test_idx, "y"]
-    fitted = {}
     xcols = [c for c in data.columns if c != "y"]
 
-    for i, t in enumerate(test_idx):
-        if i % recal_every_h == 0:
-            pos = data.index.get_loc(t)
-            tr = data.iloc[max(0, pos - cal_hours) : pos]
-            for q in quantiles:
-                fitted[q] = _qmodel(q).fit(tr[xcols].values, tr["y"].values)
-            if verbose:
-                print(f"  intraday recalibration @ {t} ({i}/{test_hours})")
-        x = data.loc[[t], xcols].values
-        out.loc[t, ["q10", "q50", "q90"]] = [fitted[q].predict(x)[0] for q in quantiles]
+    # One iteration per recalibration block: fit on data strictly before the
+    # block, predict the whole block at once (same forecasts, far fewer calls).
+    for i in range(0, len(test_idx), recal_every_h):
+        block = test_idx[i : i + recal_every_h]
+        pos = data.index.get_loc(block[0])
+        tr = data.iloc[max(0, pos - cal_hours) : pos]
+        if verbose:
+            print(f"  intraday recalibration @ {block[0]} ({i}/{test_hours})")
+        Xb = data.loc[block, xcols]
+        for q, col in zip(quantiles, ["q10", "q50", "q90"]):
+            out.loc[block, col] = _qmodel(q).fit(tr[xcols], tr["y"]).predict(Xb)
 
     # enforce quantile monotonicity
     out["q10"], out["q90"] = np.minimum(out["q10"], out["q90"]), np.maximum(out["q10"], out["q90"])
@@ -126,7 +126,9 @@ def backtest_intraday(
     alpha = 1 - (quantiles[2] - quantiles[0])  # e.g. 0.2 for (0.1, 0.9)
     E = np.maximum(out["q10"] - out["y"], out["y"] - out["q90"])
     qE = E.rolling(24 * 30, min_periods=24 * 7).quantile(1 - alpha).shift(1)
-    qE = qE.bfill().fillna(0)
+    # no correction until enough past scores exist — backfilling would use
+    # future conformity scores (look-ahead) on the early test hours
+    qE = qE.fillna(0)
     out["q10"] -= qE
     out["q90"] += qE
     return out
