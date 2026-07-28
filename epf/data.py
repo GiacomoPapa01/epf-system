@@ -85,22 +85,46 @@ def load_entsoe(
 
 
 def _query_generation_by_type(client, zone, start_ts, end_ts, psr_types):
-    """Sum actual generation over the given PSR types (skips absent ones)."""
+    """
+    Sum actual generation over the given PSR types (skips absent ones).
+
+    Queried year by year and normalized per chunk: entsoe-py's own yearly
+    concat fails when the API returns MultiIndex columns for some years and
+    flat ones for others (format changed over time).
+    """
     from entsoe.exceptions import NoMatchingDataError
 
     total = None
     for psr in psr_types:
-        try:
-            g = client.query_generation(zone, start=start_ts, end=end_ts, psr_type=psr)
-        except NoMatchingDataError:  # e.g. no offshore wind in this zone
+        parts = []
+        for c_start, c_end in _year_chunks(start_ts, end_ts):
+            try:
+                g = client.query_generation(zone, start=c_start, end=c_end, psr_type=psr)
+            except NoMatchingDataError:  # e.g. no offshore wind in this zone
+                continue
+            if isinstance(g, pd.DataFrame):
+                # drop "Actual Consumption" columns (pumped storage etc.)
+                keep = [c for c in g.columns if "Consumption" not in str(c)]
+                g = g[keep].sum(axis=1)
+            parts.append(_to_hourly(g))
+        if not parts:
             continue
-        if isinstance(g, pd.DataFrame):
-            # drop "Actual Consumption" columns (pumped storage etc.)
-            keep = [c for c in g.columns if "Consumption" not in str(c)]
-            g = g[keep].sum(axis=1)
-        g = _to_hourly(g)
-        total = g if total is None else total.add(g, fill_value=0.0)
+        s = pd.concat(parts).sort_index()
+        s = s[~s.index.duplicated()]
+        total = s if total is None else total.add(s, fill_value=0.0)
     return total
+
+
+def _year_chunks(start_ts: pd.Timestamp, end_ts: pd.Timestamp):
+    edges = [start_ts]
+    y = start_ts.year + 1
+    while y <= end_ts.year:
+        cut = pd.Timestamp(f"{y}-01-01", tz=start_ts.tz)
+        if cut < end_ts:
+            edges.append(cut)
+        y += 1
+    edges.append(end_ts)
+    return list(zip(edges[:-1], edges[1:]))
 
 
 def _to_hourly(s):
