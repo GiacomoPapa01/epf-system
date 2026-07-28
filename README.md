@@ -1,89 +1,293 @@
-# EPF System — Day-Ahead & Intraday Electricity Price Forecasting
+<p align="center">
+  <h1 align="center">⚡ EPF System</h1>
+  <p align="center">
+    <strong>Day-Ahead & Intraday Electricity Price Forecasting</strong>
+  </p>
+  <p align="center">
+    End-to-end, walk-forward-backtested forecasting pipeline for European power markets
+  </p>
+  <p align="center">
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#methodology">Methodology</a> •
+    <a href="#results">Results</a> •
+    <a href="#data-sources">Data Sources</a> •
+    <a href="#license">License</a>
+  </p>
+</p>
 
-End-to-end, walk-forward-backtested forecasting system for European power markets. Day-ahead layer follows the strongest published open benchmarks (Lago, Marcjasz, De Schutter, Weron, *Applied Energy* 2021); the intraday layer models the DA→ID spread as a function of residual-load surprises with quantile gradient boosting and conformalized bands.
+<br>
 
-## Layout
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)
+![License MIT](https://img.shields.io/badge/license-MIT-green)
+![CI](https://img.shields.io/github/actions/workflow/status/GiacomoPapa01/epf-system/ci.yml?label=CI&logo=githubactions&logoColor=white)
+
+---
+
+## Overview
+
+Electricity is the only major commodity that **cannot be stored at scale**. This makes its price exhibit extreme statistical behavior — multi-scale seasonality, mean reversion, sudden spikes (5–20×), and even **negative prices** when renewables oversupply inflexible baseload. A Gaussian model is structurally wrong for this target.
+
+**EPF System** is a production-oriented Python pipeline that forecasts **24 hourly day-ahead prices** and **intraday DA→ID spreads** with:
+
+- 🔒 **No look-ahead leakage** — forecasts use only information available before the SDAC 12:00 CET gate closure, enforced structurally and unit-tested
+- 📊 **Probabilistic output** — asymmetric split-conformal intervals (day-ahead) and CQR-corrected quantile bands (intraday)
+- 📈 **Rigorous validation** — walk-forward backtesting, Diebold–Mariano significance tests, and honest coverage reporting
+- 🏗️ **Modular architecture** — swap data sources, models, or features without touching the backtest engine
+
+The day-ahead layer follows the strongest published open benchmarks ([Lago et al., 2021](https://doi.org/10.1016/j.apenergy.2021.116983)); the intraday layer models the DA→ID spread as a function of residual-load surprises.
+
+---
+
+## Architecture
 
 ```
 epf-system/
-├── epf/
-│   ├── data.py        # loaders: ENTSO-E API, epftoolbox open datasets, synthetic
-│   ├── validation.py  # data quality: gap/duplicate repair + anomaly report
-│   ├── features.py    # LEAR-style design matrix, residual load, AsinhScaler
-│   ├── models.py      # NaiveDaily, LEAR, LEARWindows, GBT (winsorized), Ensemble
-│   ├── backtest.py    # walk-forward engine, rolling recalibration, split-conformal
-│   ├── intraday.py    # DA→ID spread model (quantile GBT + CQR correction)
-│   └── metrics.py     # MAE, rMAE, sMAPE, pinball, coverage, Diebold-Mariano
-├── scripts/
-│   ├── run_dayahead.py
-│   └── run_intraday.py
-├── tests/test_pipeline.py   # 7 tests: no-look-ahead, DM, conformal coverage, repairs
-├── ROBUSTNESS.md      # change log of every robustness improvement + rationale
-├── data/      # cached downloads
-└── outputs/   # forecasts, intervals, metrics, DM p-values (CSV)
+│
+├── epf/                          # Core library
+│   ├── data.py                   # Data loaders: ENTSO-E API, epftoolbox, synthetic
+│   ├── validation.py             # Data quality: gap/duplicate repair + anomaly reports
+│   ├── features.py               # LEAR-style design matrix, residual load, AsinhScaler
+│   ├── models.py                 # NaiveDaily, LEAR, LEARWindows, GBT, Ensemble
+│   ├── backtest.py               # Walk-forward engine, rolling recalibration, conformal
+│   ├── intraday.py               # DA→ID spread model (quantile GBT + CQR correction)
+│   └── metrics.py                # MAE, rMAE, sMAPE, pinball, coverage, Diebold-Mariano
+│
+├── scripts/                      # Entry points
+│   ├── run_dayahead.py           # Day-ahead backtest CLI
+│   ├── run_intraday.py           # Intraday spread backtest CLI
+│   └── download_entsoe.py        # ENTSO-E data downloader with caching
+│
+├── tests/
+│   └── test_pipeline.py          # 7 tests: no-look-ahead, DM, conformal, repairs
+│
+├── data/                         # Cached downloads (gitignored)
+├── outputs/                      # Forecasts, intervals, metrics, DM p-values (CSV)
+├── ROBUSTNESS.md                 # Change log of every robustness improvement
+├── requirements.txt
+└── LICENSE                       # MIT
 ```
 
-## Quick start
+### Model Pipeline
+
+```
+┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────────┐
+│  Data Layer │────▶│   Features   │────▶│    Models       │────▶│   Backtest   │
+│             │     │              │     │                 │     │              │
+│ • ENTSO-E   │     │ • Price lags │     │ • NaiveDaily    │     │ • Walk-fwd   │
+│ • epftoolbox│     │ • Exog DA fc │     │ • LEAR (Lasso)  │     │ • Conformal  │
+│ • Synthetic │     │ • Res. load  │     │ • LEARWindows   │     │ • DM test    │
+│             │     │ • Calendar   │     │ • GBT (LightGBM)│     │ • Metrics    │
+│ Validation  │     │ • AsinhScale │     │ • Ensemble      │     │              │
+└─────────────┘     └──────────────┘     └────────────────┘     └──────────────┘
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python ≥ 3.10
+- (Optional) [LightGBM](https://lightgbm.readthedocs.io/) for faster gradient boosting — falls back to sklearn's `HistGradientBoostingRegressor` automatically
+
+### Installation
 
 ```bash
+git clone https://github.com/GiacomoPapa01/epf-system.git
+cd epf-system
 pip install -r requirements.txt
-python tests/test_pipeline.py
-
-# 1) Reproducible open benchmark (6 years, German market, Lago et al. data)
-python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 1
-
-# 2) Full real data via ENTSO-E Transparency (free token: transparency.entsoe.eu)
-#    Put ENTSOE_KEY=... in a .env file (gitignored) or export it as env var.
-python scripts/download_entsoe.py --zone DE_LU --start 2021-01-01   # caches to data/
-python scripts/run_dayahead.py --source entsoe --start 2021-01-01 --cal 730 --test 365
-
-# 3) Intraday spread (proxy demo; plug real EPEX ID3 with --id-csv)
-python scripts/run_intraday.py --source entsoe --id-csv my_id3.csv
 ```
 
-Smoke test without any data/API (synthetic German-like market):
+### Run Tests
+
 ```bash
+python tests/test_pipeline.py
+```
+
+### Smoke Test (no data/API needed)
+
+```bash
+# Day-ahead: synthetic German-like market
 python scripts/run_dayahead.py --source synthetic --days 480 --cal 300 --test 45 --recal 5
+
+# Intraday spread
 python scripts/run_intraday.py --source synthetic --days 300 --cal-hours 4800 --test-hours 720
 ```
 
+### Reproducible Open Benchmark
+
+```bash
+# 6-year German market, Lago et al. epftoolbox data
+python scripts/run_dayahead.py --source epftoolbox --market DE --cal 730 --test 365 --recal 1
+```
+
+### Real Data via ENTSO-E
+
+```bash
+# 1. Get a free API key at https://transparency.entsoe.eu
+#    Put ENTSOE_KEY=your_key in .env (gitignored) or export it
+
+# 2. Download and cache data
+python scripts/download_entsoe.py --zone DE_LU --start 2021-01-01
+
+# 3. Run backtest
+python scripts/run_dayahead.py --source entsoe --start 2021-01-01 --cal 730 --test 365
+
+# 4. Intraday (requires real EPEX ID3 data via --id-csv)
+python scripts/run_intraday.py --source entsoe --id-csv my_id3.csv
+```
+
+All outputs (forecasts, metrics, DM p-values) are saved as CSV to `outputs/`.
+
+---
+
 ## Methodology
 
-### Day-ahead
-- **Framing**: forecast the 24 hourly prices of day D using only information available before the 12:00 D−1 gate closure. No-look-ahead is enforced structurally (day-level shifts) and unit-tested.
-- **Features** (LEAR set + extensions): full 24-hour price vectors at lags 1/2/3/7 days; day-ahead forecasts of load, wind, solar and **residual load** for D, D−1, D−7; weekday dummies; annual sin/cos.
-- **Models**:
-  - `NaiveDaily` — similar-day benchmark (mandatory: rMAE denominator);
-  - `LEAR` — one Lasso per hour, λ by AIC, on asinh/median-MAD-scaled data (robust to spikes, handles negative prices);
-  - `GBT` — LightGBM if available, sklearn HistGradientBoosting otherwise (auto-fallback, works on Python 3.14);
-  - `Ensemble` — simple average (the hardest baseline to beat in EPF).
-- **Backtest**: rolling calibration window (default 730 days), daily recalibration (`--recal 1`), long out-of-sample test (≥ 1 year recommended).
-- **Uncertainty**: rolling **asymmetric** split-conformal per hour on signed out-of-sample residuals → distribution-free 90% intervals that adapt to volatility regimes and to spike skew.
-- **Evaluation**: MAE, RMSE, rMAE, sMAPE, empirical coverage, pinball loss, and **multivariate Diebold–Mariano** p-value matrix on daily losses.
+### Day-Ahead Forecasting
 
-### Intraday
-- **Target**: `spread(h) = ID_price(h) − DA_price(h)` (ID3/ID1/VWAP as reference).
-- **Driver**: residual-load surprise `res_load_act − res_load_fc`, lagged by a configurable knowledge lag (default 2h) to mimic actual publication delays — the model never sees the concurrent hour.
-- **Model**: quantile gradient boosting (q10/q50/q90) + **CQR** post-hoc conformal correction of the bands.
-- **Metrics**: MAE vs the naive "ID = DA" benchmark, 80% band coverage, directional accuracy of the spread sign (the trading-relevant number).
+**Framing.** Forecast the 24 hourly prices of day D using only information available before the 12:00 D−1 gate closure. No-look-ahead is enforced structurally (day-level shifts in feature engineering) and verified by unit tests.
 
-### Reference results (synthetic smoke test, 45-day OOS)
-| model | MAE | rMAE | cov90% |
-|---|---|---|---|
-| naive | 21.8 | 1.00 | — |
+#### Features (LEAR set + extensions)
+
+| Category | Features | Leakage-safe? |
+|----------|----------|:------------:|
+| **Price lags** | Full 24h vectors at lags 1, 2, 3, 7 days | ✅ D−1 price fixed at D−2 auction |
+| **Exogenous forecasts** | `load_fc`, `wind_fc`, `solar_fc` for D, D−1, D−7 | ✅ TSO publishes before auction |
+| **Residual load** | `load_fc − wind_fc − solar_fc` (merit order proxy) | ✅ Derived from forecasts |
+| **Calendar** | Day-of-week dummies, annual sin/cos | ✅ Deterministic |
+
+**Scaling:** Asinh + median/MAD standardization ([Uniejewski et al.](https://doi.org/10.1016/j.apenergy.2018.09.226)) — robust to spikes and handles negative prices natively (unlike log).
+
+#### Models
+
+| Model | Description | Role |
+|-------|-------------|------|
+| **NaiveDaily** | `price(D) = price(D−1)`; Mon/Sat/Sun → `price(D−7)` | Mandatory rMAE denominator |
+| **LEAR** | One Lasso per hour, λ by AIC, on asinh-scaled data | State-of-the-art linear benchmark |
+| **LEARWindows** | LEAR averaged over multiple calibration windows (56, 84, 365, 730 days) | Regime adaptation |
+| **GBT** | LightGBM (or sklearn fallback), winsorized targets | Non-linear model |
+| **Ensemble** | Simple average of LEAR + GBT | Hardest baseline to beat in EPF |
+
+#### Validation Protocol
+
+```
+Walk-forward (rolling origin) — expanding calibration window:
+
+[============= train (rolling cal_days) =============][ test day D ]
+                                          ↓ recalibrate
+[=============== train ===============================][ test D+1   ]
+```
+
+- **Rolling calibration window** (default 730 days), recalibration every `--recal` days
+- **Never K-fold randomized** — with regime shifts (e.g. 2021–22 gas crisis) it would leak the future into training
+- **Diebold–Mariano test** (multivariate, daily losses) for statistical significance
+
+#### Uncertainty Quantification
+
+**Asymmetric split-conformal intervals** per hour: rolling quantiles of the *signed* out-of-sample residuals at α/2 and 1−α/2. Power prices are right-skewed (spikes), so symmetric |residual| bands over-cover on the left and under-cover exactly where risk lives. The asymmetric approach fixes both while preserving the distribution-free coverage guarantee.
+
+---
+
+### Intraday Spread Forecasting
+
+**Target:** `spread(h) = ID_price(h) − DA_price(h)`
+
+**Key driver:** Residual-load surprise `res_load_act − res_load_fc`, lagged by a configurable knowledge lag (default 2h) to mimic real publication delays — the model never sees the concurrent hour.
+
+| Component | Detail |
+|-----------|--------|
+| **Model** | Quantile gradient boosting (q10/q50/q90) |
+| **Band correction** | CQR — Conformalized Quantile Regression ([Romano et al., 2019](https://arxiv.org/abs/1905.03222)) |
+| **Evaluation** | MAE vs "ID = DA" naive, 80% coverage, directional accuracy |
+
+---
+
+## Results
+
+### Day-Ahead (synthetic 45-day OOS)
+
+| Model | MAE (€/MWh) | rMAE | Coverage 90% |
+|-------|:-----------:|:----:|:------------:|
+| Naive | 21.8 | 1.00 | — |
 | LEAR | 11.5 | 0.53 | 87% |
 | GBT | 16.8 | 0.77 | 85% |
-| ensemble | 12.0 | 0.55 | 87.5% |
+| **Ensemble** | **12.0** | **0.55** | **87.5%** |
 
-Intraday (proxy spread): rMAE 0.47 vs ID=DA, coverage 81.8% (nominal 80%), directional accuracy 86%.
+### Intraday Spread (proxy)
 
-## Data sources (maximize coverage)
-1. **ENTSO-E Transparency** (free API): DA prices, load forecast/actual, wind & solar forecast/actual → both layers, any EU zone.
-2. **epftoolbox open datasets**: DE, NP, PJM, BE, FR — 6 years each, exact reproducibility against published benchmarks.
-3. **EPEX intraday indices** (ID1/ID3, licensed): required for the real intraday target; the pipeline accepts them via `--id-csv`.
-4. Optional extensions: TTF gas & EUA carbon (fuel-switching regressors), cross-border flows/ATC, outage data (UMM).
+| Metric | Value |
+|--------|:-----:|
+| rMAE vs ID=DA | 0.47 |
+| Coverage 80% | 81.8% |
+| Directional accuracy | 86% |
 
-## Honest limitations
-- The intraday demo uses a **proxy spread**: the machinery is validated, the economics need real ID prices.
-- DST days are dropped (standard in the literature); production code should handle 23/25-hour days explicitly.
-- Daily recalibration of GBT over a 1-year test takes hours on a laptop; `--recal 7` is a good accuracy/runtime compromise for trees (keep `--recal 1` for LEAR).
+> **Honest reading:** These results are on synthetic data designed to validate the pipeline mechanics. Real-market performance requires plugging in ENTSO-E prices and (for intraday) real EPEX ID data. The synthetic generator is realistic (merit-order based, OU gas dynamics, Poisson–Gamma spikes, growing solar capacity), but it is not a substitute for empirical evaluation.
+
+---
+
+## Data Sources
+
+| Source | Coverage | Access | Used for |
+|--------|----------|--------|----------|
+| **ENTSO-E Transparency** | All EU zones, DA prices + load/wind/solar fc/act | Free API key | Both layers |
+| **epftoolbox** | DE, NP, PJM, BE, FR — 6 years each | Open, bundled | Reproducible benchmarks |
+| **EPEX intraday indices** | ID1/ID3/VWAP | Licensed | Real intraday target |
+| **Synthetic generator** | Configurable | Built-in | Testing & development |
+
+---
+
+## Test Suite
+
+7 unit tests covering critical invariants:
+
+| Test | What it verifies |
+|------|------------------|
+| `test_no_lookahead_in_design_matrix` | Price features only from strictly earlier days |
+| `test_dm_test_symmetric` | DM test correctly identifies the better model |
+| `test_asinh_scaler_roundtrip` | `AsinhScaler` perfectly invertible |
+| `test_validation_repairs_gaps_and_duplicates` | Gap + duplicate repair with correct reporting |
+| `test_panel_repairs_dst_like_day` | 23-hour DST days repaired, not dropped |
+| `test_asymmetric_conformal_coverage` | Asymmetric bands achieve target coverage on skewed errors |
+| `test_learwindows_runs` | Multi-window LEAR produces finite forecasts |
+
+CI runs on every push via GitHub Actions (Python 3.12, full synthetic smoke test).
+
+---
+
+## Honest Limitations
+
+- 🔴 **Intraday uses a proxy spread** — the machinery is validated, but real economics require actual EPEX ID prices
+- 🟡 **DST days** — 23/25-hour days are dropped (standard in the literature); production code should handle them explicitly
+- 🟡 **No hyperparameter tuning** for GBT — fixed sensible defaults; nested time-series CV would be the clean extension
+- 🟡 **Daily recalibration of GBT** over a 1-year test takes hours — use `--recal 7` for a good accuracy/runtime trade-off
+- 🟡 **DM test** uses t-approximation — for publication-grade claims, add Giacomini–White conditional predictive ability
+
+---
+
+## Roadmap
+
+1. **Conformal prediction upgrade** — replace split-conformal with full CQR on the day-ahead layer for guaranteed adaptive coverage
+2. **Two-stage spike model** — spike classifier (`resload > threshold`) + conditional regressor for tail accuracy
+3. **LEAR + GBT ensemble blending** — stacking typically cuts another 2–5% MAE vs simple averaging
+4. **Real ENTSO-E integration guide** — step-by-step notebook for onboarding new markets
+
+---
+
+## References
+
+- Lago, Marcjasz, De Schutter, Weron (2021). *Forecasting day-ahead electricity prices: A review of state-of-the-art algorithms, best practices and an open-access benchmark.* Applied Energy. [doi:10.1016/j.apenergy.2021.116983](https://doi.org/10.1016/j.apenergy.2021.116983)
+- Romano, Patterson, Candès (2019). *Conformalized Quantile Regression.* NeurIPS. [arXiv:1905.03222](https://arxiv.org/abs/1905.03222)
+- Weron (2014). *Electricity price forecasting: A review of the state-of-the-art with a look into the future.* International Journal of Forecasting.
+- Uniejewski, Nowotarski, Weron (2016). *Automated variable selection and shrinkage for day-ahead electricity price forecasting.* Energies.
+
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  Made with ⚡ by <a href="https://github.com/GiacomoPapa01">Giacomo Papa</a>
+</p>
